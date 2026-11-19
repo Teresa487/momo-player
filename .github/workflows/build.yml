@@ -11,7 +11,7 @@ on:
 jobs:
   build:
     # arm64 的 macOS runner，编译 FFmpeg 静态库更快
-    runs-on: macos-14
+    runs-on: macos-latest
     timeout-minutes: 60
 
     steps:
