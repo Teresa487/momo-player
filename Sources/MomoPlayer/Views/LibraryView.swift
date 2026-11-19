@@ -83,9 +83,9 @@ struct LibraryView: View {
             Image(systemName: "play.rectangle.on.rectangle")
                 .font(.system(size: 62))
                 .foregroundStyle(.tint)
-            Text("选择文件夹或视频文件")
+            Text("选择一个文件夹")
                 .font(.headline)
-            Text("选文件夹会递归列出里面所有可播放的文件；\n也可以直接选单个视频。")
+            Text("选好后会递归列出里面所有可播放的文件，\n包括子目录。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -148,24 +148,9 @@ struct LibraryView: View {
         Log.event("scan", "=== 新选择: \(url.path) ===")
         folderURL = url
 
-        // 选中的可能就是单个文件，不必当目录扫描
         var isDir: ObjCBool = false
         let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
         Log.event("scan", "exists=\(exists) isDir=\(isDir.boolValue)")
-
-        if exists, !isDir.boolValue {
-            // 直接是文件
-            if MediaKind.isPlayable(url) {
-                Log.event("scan", "直接作为单文件加入列表")
-                items = [MediaItem(url: url, name: url.lastPathComponent, cloudStatus: .current)]
-                errorText = nil
-            } else {
-                Log.event("scan", "扩展名不被支持: \(url.pathExtension)")
-                errorText = "不支持的文件类型：\(url.pathExtension)"
-                items = []
-            }
-            return
-        }
 
         await rescan()
     }

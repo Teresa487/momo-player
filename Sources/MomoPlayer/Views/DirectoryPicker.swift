@@ -12,24 +12,15 @@ struct DirectoryPicker: UIViewControllerRepresentable {
     let onPick: (URL) -> Void
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        // 文件夹 + 常见视频类型，两者都能选
-        var types: [UTType] = [.folder]
-        types.append(contentsOf: [
-            .movie, .video, .mpeg4Movie, .quickTimeMovie, .audio, .mp3, .mpeg2Video,
-        ])
-        // 去重，避免重复类型导致系统报错
-        var seen = Set<String>()
-        let unique = types.filter { seen.insert($0.identifier).inserted }
-
-        Log.event("picker", "创建选择器，类型: \(unique.map(\.identifier).joined(separator: ","))")
-
+        // 只能是 .folder。混入 .movie 之类的文件类型后，系统会按「选择文件」
+        // 处理，选中文件夹时「打开」按钮就是灰的，点不了。
         let picker = UIDocumentPickerViewController(
-            forOpeningContentTypes: unique,
+            forOpeningContentTypes: [.folder],
             asCopy: false
         )
         picker.allowsMultipleSelection = false
-        picker.shouldShowFileExtensions = true
         picker.delegate = context.coordinator
+        Log.event("picker", "创建文件夹选择器")
         return picker
     }
 
