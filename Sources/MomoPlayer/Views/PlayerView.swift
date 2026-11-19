@@ -55,20 +55,18 @@ final class MomoPlayerController: UIViewController {
         loadViewIfNeeded()
 
         let options = KSOptions()
-        options.isAutoPlay = true
-        // 允许后台播放与画中画
-        options.canBackgroundPlay = true
-        options.isSecondOpen = true
+        // 优先硬解，失败时 KSPlayer 会自动回退软解
         options.hardwareDecode = true
+        // 自动选中内嵌音轨与字幕
+        options.autoSelectEmbedSubtitle = true
+        // 后台播放需要注册远程控制
+        options.registerRemoteControll = true
 
-        let definition = KSPlayerResourceDefinition(
-            url: item.url,
-            definition: "原始",
-            options: options
-        )
+        // 单文件播放用这个便捷构造即可
         let resource = KSPlayerResource(
-            name: item.displayName,
-            definitions: [definition]
+            url: item.url,
+            options: options,
+            name: item.displayName
         )
         playerView.set(resource: resource)
         title = item.displayName

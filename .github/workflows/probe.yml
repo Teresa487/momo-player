@@ -1,9 +1,0 @@
-name: probe
-on: workflow_dispatch
-jobs:
-  a:
-    runs-on: macos-latest
-    steps: [{run: "echo macos-latest OK && sw_vers"}]
-  b:
-    runs-on: macos-13
-    steps: [{run: "echo macos-13 OK && sw_vers"}]

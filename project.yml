@@ -6,9 +6,11 @@ options:
   createIntermediateGroups: true
 
 packages:
+  # 5.x 的 KSPlayer 核心是预编译 xcframework，只有模拟器 slice，编不了真机。
+  # 2.3.4 是最后一批提供完整 Swift 源码的版本，直接源码编译即可支持真机。
   KSPlayer:
     url: https://github.com/kingslay/KSPlayer.git
-    from: 5.6.2
+    exactVersion: 2.3.4
 
 targets:
   MomoPlayer:
@@ -16,13 +18,10 @@ targets:
     platform: iOS
     sources:
       - path: Sources/MomoPlayer
-      - path: Resources
-        buildPhase: resources
+        # Info.plist 由 INFOPLIST_FILE 处理，不要再当资源拷贝一遍
     dependencies:
       - package: KSPlayer
         product: KSPlayer
-      - package: KSPlayer
-        product: KSPlayerUI
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.momo.player
