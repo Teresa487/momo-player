@@ -1,0 +1,43 @@
+name: MomoPlayer
+options:
+  bundleIdPrefix: com.momo
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+
+packages:
+  KSPlayer:
+    url: https://github.com/kingslay/KSPlayer.git
+    from: 5.6.2
+
+targets:
+  MomoPlayer:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/MomoPlayer
+      - path: Resources
+        buildPhase: resources
+    dependencies:
+      - package: KSPlayer
+        product: KSPlayer
+      - package: KSPlayer
+        product: KSPlayerUI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.momo.player
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        INFOPLIST_FILE: Resources/Info.plist
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        # 未签名构建，签名在本地完成
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
+        ENABLE_BITCODE: NO
+        # KSPlayer 是静态库，需要允许非模块化头文件
+        CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES: YES
+        OTHER_LDFLAGS:
+          - -ObjC
+          - -lc++

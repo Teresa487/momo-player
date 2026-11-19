@@ -1,0 +1,304 @@
+import AVFoundation
+import KSPlayer
+import MediaPlayer
+import SwiftUI
+import UIKit
+
+/// MX / SenPlayer 风格的播放器界面
+///
+/// 手势布局：
+/// - 左半屏上下滑：亮度
+/// - 右半屏上下滑：音量
+/// - 水平滑：进度
+/// - 双击：播放/暂停
+/// - 双指捏合：缩放画面
+struct PlayerView: UIViewControllerRepresentable {
+    let item: MediaItem
+
+    func makeUIViewController(context: Context) -> MomoPlayerController {
+        let vc = MomoPlayerController()
+        vc.configure(with: item)
+        return vc
+    }
+
+    func updateUIViewController(_ uiViewController: MomoPlayerController, context: Context) {}
+}
+
+/// 用 UIKit 承载，因为手势和 HUD 用 UIKit 写更直接，
+/// KSPlayer 的播放层本身也是 UIKit 视图。
+final class MomoPlayerController: UIViewController {
+    private let playerView = IOSVideoPlayerView()
+    private var item: MediaItem?
+
+    // 手势进度状态
+    private var panStartPoint: CGPoint?
+    private var panMode: PanMode = .none
+    private var seekStartTime: TimeInterval = 0
+
+    private enum PanMode {
+        case none, brightness, volume, seek
+    }
+
+    // MARK: - 生命周期
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        setupPlayerView()
+        setupGestures()
+        setupHUD()
+        observeSystemVolume()
+    }
+
+    func configure(with item: MediaItem) {
+        self.item = item
+        loadViewIfNeeded()
+
+        let options = KSOptions()
+        options.isAutoPlay = true
+        // 允许后台播放与画中画
+        options.canBackgroundPlay = true
+        options.isSecondOpen = true
+        options.hardwareDecode = true
+
+        let definition = KSPlayerResourceDefinition(
+            url: item.url,
+            definition: "原始",
+            options: options
+        )
+        let resource = KSPlayerResource(
+            name: item.displayName,
+            definitions: [definition]
+        )
+        playerView.set(resource: resource)
+        title = item.displayName
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        playerView.pause()
+    }
+
+    // MARK: - 播放层
+
+    private func setupPlayerView() {
+        playerView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(playerView)
+        NSLayoutConstraint.activate([
+            playerView.topAnchor.constraint(equalTo: view.topAnchor),
+            playerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            playerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            playerView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+    }
+
+    // MARK: - 手势
+
+    private func setupGestures() {
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        pan.delegate = self
+        view.addGestureRecognizer(pan)
+
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap))
+        doubleTap.numberOfTapsRequired = 2
+        doubleTap.delegate = self
+        view.addGestureRecognizer(doubleTap)
+
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+        pinch.delegate = self
+        view.addGestureRecognizer(pinch)
+    }
+
+    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        let location = gesture.location(in: view)
+        let translation = gesture.translation(in: view)
+
+        switch gesture.state {
+        case .began:
+            panStartPoint = location
+            panMode = .none
+
+        case .changed:
+            if panMode == .none {
+                let dx = abs(translation.x)
+                let dy = abs(translation.y)
+                // 水平位移明显更大就走进度，否则按左右半屏分亮度/音量
+                if dx > dy, dx > 12 {
+                    panMode = .seek
+                    seekStartTime = playerView.playerLayer?.player?.currentPlaybackTime ?? 0
+                } else if dy > dx, dy > 12 {
+                    panMode = location.x < view.bounds.width / 2 ? .brightness : .volume
+                }
+            }
+
+            switch panMode {
+            case .seek:
+                let total = playerView.playerLayer?.player?.duration ?? 0
+                guard total > 0 else { break }
+                // 横跨整屏对应总时长的 1/2，滑起来不至于太灵敏
+                let delta = Double(translation.x / view.bounds.width) * total * 0.5
+                let target = min(max(seekStartTime + delta, 0), total)
+                showSeekHUD(target: target, total: total)
+
+            case .brightness:
+                let delta = Float(-translation.y / view.bounds.height)
+                adjustBrightness(by: delta)
+
+            case .volume:
+                let delta = Float(-translation.y / view.bounds.height)
+                adjustVolume(by: delta)
+
+            case .none:
+                break
+            }
+
+        case .ended, .cancelled:
+            if panMode == .seek {
+                let total = playerView.playerLayer?.player?.duration ?? 0
+                if total > 0 {
+                    let delta = Double(translation.x / view.bounds.width) * total * 0.5
+                    let target = min(max(seekStartTime + delta, 0), total)
+                    playerView.seek(time: target) { _ in }
+                }
+            }
+            hideHUD()
+            panMode = .none
+            panStartPoint = nil
+
+        default:
+            break
+        }
+    }
+
+    @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+        guard let player = playerView.playerLayer?.player else { return }
+        if player.isPlaying {
+            playerView.pause()
+        } else {
+            playerView.play()
+        }
+    }
+
+    @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        // 缩放画面：通过变换播放层实现，双击复位
+        guard let layerView = playerView.subviews.first else { return }
+        if gesture.state == .changed {
+            let scale = max(1.0, min(gesture.scale, 3.0))
+            layerView.transform = CGAffineTransform(scaleX: scale, y: scale)
+        }
+    }
+
+    // MARK: - 亮度 / 音量
+
+    private var baseBrightness: CGFloat = UIScreen.main.brightness
+
+    private func adjustBrightness(by delta: Float) {
+        let current = UIScreen.main.brightness
+        if baseBrightness == 0 { baseBrightness = current }
+        let next = min(max(UIScreen.main.brightness + CGFloat(delta), 0.02), 1.0)
+        UIScreen.main.brightness = next
+        showHUD(systemImage: "sun.max.fill", value: Float(next))
+    }
+
+    private let volumeView = MPVolumeView(frame: .zero)
+
+    private func setupHUD() {
+        volumeView.showsRouteButton = false
+        volumeView.alpha = 0.001
+        view.addSubview(volumeView)
+    }
+
+    private func adjustVolume(by delta: Float) {
+        let current = AVAudioSession.sharedInstance().outputVolume
+        let next = min(max(current + delta, 0), 1)
+        // 系统音量没有公开的写入 API，只能通过 MPVolumeSlider 设置
+        if let slider = volumeView.subviews.compactMap({ $0 as? UISlider }).first {
+            DispatchQueue.main.async {
+                slider.value = next
+            }
+        }
+        showHUD(systemImage: next > 0 ? "speaker.wave.2.fill" : "speaker.slash.fill", value: next)
+    }
+
+    private func observeSystemVolume() {
+        // 音量键改系统音量时，这里不做额外处理，滑动手势已覆盖主要场景
+    }
+
+    // MARK: - HUD
+
+    private lazy var hudLabel: UILabel = {
+        let label = UILabel()
+        label.textColor = .white
+        label.font = .monospacedDigitSystemFont(ofSize: 16, weight: .medium)
+        label.textAlignment = .center
+        label.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        label.layer.cornerRadius = 8
+        label.clipsToBounds = true
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.isHidden = true
+        return label
+    }()
+
+    private var hudHideWorkItem: DispatchWorkItem?
+
+    private func showHUD(systemImage: String, value: Float) {
+        let bar = String(repeating: "█", count: Int(value * 10))
+        let empty = String(repeating: "░", count: 10 - Int(value * 10))
+        hudLabel.text = "  \(bar)\(empty)  \(Int(value * 100))%  "
+        presentHUD()
+    }
+
+    private func showSeekHUD(target: TimeInterval, total: TimeInterval) {
+        hudLabel.text = "  \(format(target)) / \(format(total))  "
+        presentHUD()
+    }
+
+    private func presentHUD() {
+        if hudLabel.superview == nil {
+            view.addSubview(hudLabel)
+            NSLayoutConstraint.activate([
+                hudLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+                hudLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+                hudLabel.heightAnchor.constraint(equalToConstant: 40),
+            ])
+        }
+        hudLabel.isHidden = false
+
+        hudHideWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.hudLabel.isHidden = true
+        }
+        hudHideWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: work)
+    }
+
+    private func hideHUD() {
+        hudHideWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.hudLabel.isHidden = true
+        }
+        hudHideWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
+    private func format(_ time: TimeInterval) -> String {
+        guard time.isFinite, time >= 0 else { return "00:00" }
+        let total = Int(time)
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
+        return h > 0
+            ? String(format: "%d:%02d:%02d", h, m, s)
+            : String(format: "%02d:%02d", m, s)
+    }
+}
+
+extension MomoPlayerController: UIGestureRecognizerDelegate {
+    /// 同时识别播放层自己的手势，避免互相吞掉
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+    ) -> Bool {
+        true
+    }
+}
