@@ -1,7 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// 媒体库：选目录、列出视频、点开播放
+/// 媒体库：选目录或单个文件、列出可播放项、点开播放
 struct LibraryView: View {
     @State private var items: [MediaItem] = []
     @State private var folderURL: URL?
@@ -9,6 +9,7 @@ struct LibraryView: View {
     @State private var errorText: String?
     @State private var showingPicker = false
     @State private var playing: MediaItem?
+    @State private var showLog = false
 
     var body: some View {
         NavigationStack {
@@ -16,7 +17,7 @@ struct LibraryView: View {
                 if scanning {
                     VStack(spacing: 14) {
                         ProgressView()
-                        Text("正在扫描目录……")
+                        Text("正在扫描……")
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -36,10 +37,16 @@ struct LibraryView: View {
                         Image(systemName: "folder.badge.plus")
                     }
                 }
-                if folderURL != nil {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("刷新") {
-                            Task { await rescan() }
+                ToolbarItem(placement: .topBarLeading) {
+                    HStack(spacing: 14) {
+                        if folderURL != nil {
+                            Button("刷新") { Task { await rescan() } }
+                        }
+                        // 日志入口：出问题时能直接看到发生了什么
+                        Button {
+                            showLog = true
+                        } label: {
+                            Image(systemName: "ladybug")
                         }
                     }
                 }
@@ -48,6 +55,9 @@ struct LibraryView: View {
                 DirectoryPicker { url in
                     Task { await load(url) }
                 }
+            }
+            .sheet(isPresented: $showLog) {
+                LogView()
             }
             .fullScreenCover(item: $playing) { item in
                 PlayerView(item: item)
@@ -73,20 +83,26 @@ struct LibraryView: View {
             Image(systemName: "play.rectangle.on.rectangle")
                 .font(.system(size: 62))
                 .foregroundStyle(.tint)
-            Text("选择一个文件夹")
+            Text("选择文件夹或视频文件")
                 .font(.headline)
-            Text("点右上角选择存放视频的目录，\n会递归列出里面所有可播放的文件。")
+            Text("选文件夹会递归列出里面所有可播放的文件；\n也可以直接选单个视频。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             Button {
                 showingPicker = true
             } label: {
-                Text("选择文件夹")
-                    .padding(.horizontal, 22)
-                    .padding(.vertical, 10)
+                Text("选择").padding(.horizontal, 22).padding(.vertical, 10)
             }
             .buttonStyle(.borderedProminent)
+
+            Button {
+                showLog = true
+            } label: {
+                Label("查看日志", systemImage: "ladybug")
+                    .font(.footnote)
+            }
+            .padding(.top, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
@@ -95,6 +111,7 @@ struct LibraryView: View {
     private var list: some View {
         List(items) { item in
             Button {
+                Log.event("player", "点击播放: \(item.url.path)")
                 playing = item
             } label: {
                 HStack(spacing: 12) {
@@ -128,7 +145,28 @@ struct LibraryView: View {
     // MARK: - 加载
 
     private func load(_ url: URL) async {
+        Log.event("scan", "=== 新选择: \(url.path) ===")
         folderURL = url
+
+        // 选中的可能就是单个文件，不必当目录扫描
+        var isDir: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+        Log.event("scan", "exists=\(exists) isDir=\(isDir.boolValue)")
+
+        if exists, !isDir.boolValue {
+            // 直接是文件
+            if MediaKind.isPlayable(url) {
+                Log.event("scan", "直接作为单文件加入列表")
+                items = [MediaItem(url: url, name: url.lastPathComponent, cloudStatus: .current)]
+                errorText = nil
+            } else {
+                Log.event("scan", "扩展名不被支持: \(url.pathExtension)")
+                errorText = "不支持的文件类型：\(url.pathExtension)"
+                items = []
+            }
+            return
+        }
+
         await rescan()
     }
 
@@ -137,13 +175,57 @@ struct LibraryView: View {
         scanning = true
         defer { scanning = false }
         do {
-            items = try await DirectoryScanner.scan(url)
-            if items.isEmpty {
+            let found = try await DirectoryScanner.scan(url)
+            items = found
+            Log.event("scan", "扫描完成，共 \(found.count) 项")
+            if found.isEmpty {
                 errorText = "这个目录里没有找到可播放的音视频文件"
             }
         } catch {
+            Log.event("scan", "扫描失败: \(error.localizedDescription)")
             errorText = error.localizedDescription
             items = []
+        }
+    }
+}
+
+/// 日志查看页
+struct LogView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var lines: [String] = []
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    if lines.isEmpty {
+                        Text("暂无日志").foregroundStyle(.secondary)
+                    }
+                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(10)
+            }
+            .navigationTitle("日志")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("清空") {
+                        Log.clear()
+                        lines = []
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+            .onAppear {
+                lines = Log.snapshot()
+            }
         }
     }
 }

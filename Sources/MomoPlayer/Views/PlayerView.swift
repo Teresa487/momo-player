@@ -29,6 +29,9 @@ struct PlayerView: UIViewControllerRepresentable {
 final class MomoPlayerController: UIViewController {
     private let playerView = IOSVideoPlayerView()
     private var item: MediaItem?
+    private var holdingAccess = false
+    private var loggedFirstFrame = false
+    private var stateTimer: Timer?
 
     // 手势进度状态
     private var panStartPoint: CGPoint?
@@ -54,6 +57,15 @@ final class MomoPlayerController: UIViewController {
         self.item = item
         loadViewIfNeeded()
 
+        Log.event("player", "准备加载: \(item.url.path)")
+        let exists = FileManager.default.fileExists(atPath: item.url.path)
+        Log.event("player", "文件存在: \(exists)")
+
+        // 播放前必须自己持有权限，扫描阶段那次授权早已释放
+        let ok = item.url.startAccessingSecurityScopedResource()
+        Log.event("player", "startAccessing = \(ok)")
+        holdingAccess = ok
+
         let options = KSOptions()
         // 优先硬解，失败时 KSPlayer 会自动回退软解
         options.hardwareDecode = true
@@ -69,12 +81,67 @@ final class MomoPlayerController: UIViewController {
             name: item.displayName
         )
         playerView.set(resource: resource)
+        Log.event("player", "已调用 set(resource:)，等待回调")
         title = item.displayName
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         playerView.pause()
+        if holdingAccess, let url = item?.url {
+            url.stopAccessingSecurityScopedResource()
+            holdingAccess = false
+            Log.event("player", "已释放播放权限")
+        }
+    }
+
+    /// 播放状态变化都记一笔，黑屏时能看出卡在哪
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        playerView.playerLayer?.player.play()
+        Log.event("player", "viewDidAppear，已请求播放")
+        startStatePolling()
+    }
+
+    /// KSPlayer 的 delegate 协议不是 public，外部无法实现，
+    /// 所以用定时轮询把状态和错误打出来。
+    private func startStatePolling() {
+        stateTimer?.invalidate()
+        var lastState: String?
+        var tick = 0
+
+        stateTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
+            guard let self, let layer = self.playerView.playerLayer else { return }
+            tick += 1
+
+            let st = "\(layer.state)"
+            if st != lastState {
+                lastState = st
+                Log.event("player", "state → \(st)")
+            }
+
+            // 只在还没播起来时记录细节，播起来就安静了
+            if !layer.isPlaying || tick <= 6 {
+                let t = layer.player.currentPlaybackTime
+                Log.event(
+                    "player",
+                    "playing=\(layer.isPlaying) buffering=\(layer.bufferingProgress)% time=\(String(format: "%.1f", t))"
+                )
+            } else if tick == 7 {
+                Log.event("player", "已开始播放，停止细节轮询")
+                timer.invalidate()
+            }
+
+            // 进入错误态就停
+            if st.contains("error") || st.contains("failed") {
+                Log.event("player", "进入错误态，停止轮询")
+                timer.invalidate()
+            }
+        }
+    }
+
+    deinit {
+        stateTimer?.invalidate()
     }
 
     // MARK: - 播放层

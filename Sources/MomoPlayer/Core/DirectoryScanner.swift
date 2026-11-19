@@ -21,35 +21,42 @@ enum DirectoryScanner {
     }
 
     /// 递归扫描目录，返回全部可播放文件。
-    /// - Parameter triggerCloudDownload: 遇到仅在云端的文件时是否触发下载
     static func scan(
         _ directory: URL,
-        triggerCloudDownload: Bool = true
+        triggerCloudDownload: Bool = true,
+        keepAccess: Bool = false
     ) async throws -> [MediaItem] {
-        // security-scoped 权限必须成对使用
+        Log.event("scan", "开始扫描: \(directory.path)")
+        Log.event("scan", "isFileURL=\(directory.isFileURL) scheme=\(directory.scheme ?? "nil")")
+
         let scoped = directory.startAccessingSecurityScopedResource()
+        Log.event("scan", "startAccessingSecurityScopedResource = \(scoped)")
+
+        // 扫描期间释放权限；如果要保留（比如为了播放）就交给调用方
         defer {
-            if scoped { directory.stopAccessingSecurityScopedResource() }
+            if scoped && !keepAccess {
+                directory.stopAccessingSecurityScopedResource()
+                Log.event("scan", "已释放 security-scoped 权限")
+            }
         }
 
-        // 没拿到权限就别继续了，否则枚举会返回空数组而非报错
         if !scoped {
-            // 沙盒内目录（Documents 等）本来就不需要授权，这里放行
             let inSandbox = directory.path.contains(NSHomeDirectory())
+            Log.event("scan", "未获授权，是否沙盒内路径: \(inSandbox)")
             if !inSandbox {
                 throw ScanError.permissionDenied
             }
         }
 
         var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDir),
-              isDir.boolValue
-        else {
+        let exists = FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDir)
+        Log.event("scan", "exists=\(exists) isDirectory=\(isDir.boolValue)")
+
+        guard exists, isDir.boolValue else {
             throw ScanError.notDirectory
         }
 
         return await withCheckedContinuation { continuation in
-            // 扫描放到后台队列，避免大目录卡住主线程
             DispatchQueue.global(qos: .userInitiated).async {
                 let items = enumerateAll(directory, triggerCloudDownload: triggerCloudDownload)
                 continuation.resume(returning: items)
@@ -75,38 +82,48 @@ enum DirectoryScanner {
             includingPropertiesForKeys: keys,
             options: [.skipsHiddenFiles, .skipsPackageDescendants],
             errorHandler: { url, error in
-                // 单个文件读失败不能中断整体扫描
-                print("[scan] 跳过 \(url.lastPathComponent): \(error.localizedDescription)")
+                Log.event("scan", "跳过 \(url.lastPathComponent): \(error.localizedDescription)")
                 return true
             }
         ) else {
+            Log.event("scan", "创建 enumerator 失败")
             return []
         }
 
         var result: [MediaItem] = []
+        var total = 0
+        var skippedByExt = 0
 
         for case let fileURL as URL in enumerator {
-            guard MediaKind.isPlayable(fileURL) else { continue }
+            total += 1
+            guard MediaKind.isPlayable(fileURL) else {
+                skippedByExt += 1
+                continue
+            }
 
             let values = try? fileURL.resourceValues(forKeys: Set(keys))
 
-            // 只要普通文件，跳过目录或特殊文件
-            if let regular = values?.isRegularFile, !regular { continue }
+            if let regular = values?.isRegularFile, !regular {
+                Log.event("scan", "非普通文件，跳过: \(fileURL.lastPathComponent)")
+                continue
+            }
 
             var status: MediaItem.CloudStatus = .current
 
             if values?.isUbiquitousItem == true {
                 switch values?.ubiquitousItemDownloadingStatus {
-                case .current:
-                    status = .current
-                case .downloaded:
+                case .current, .downloaded:
                     status = .current
                 case .notDownloaded:
                     status = .notDownloaded
-                    // 云端未下载的文件读不出内容，先触发下载
                     if triggerCloudDownload {
-                        try? fm.startDownloadingUbiquitousItem(at: fileURL)
-                        status = .downloading
+                        do {
+                            try fm.startDownloadingUbiquitousItem(at: fileURL)
+                            status = .downloading
+                            Log.event("scan", "触发云端下载: \(fileURL.lastPathComponent)")
+                        } catch {
+                            Log.event("scan", "触发下载失败 \(fileURL.lastPathComponent): \(error.localizedDescription)")
+                        }
                     }
                 default:
                     status = .notDownloaded
@@ -116,9 +133,13 @@ enum DirectoryScanner {
             result.append(MediaItem(url: fileURL, name: fileURL.lastPathComponent, cloudStatus: status))
         }
 
-        // 按名称自然排序，第 2 集排在 第 10 集 前面
+        Log.event("scan", "遍历条目 \(total) 个，扩展名不符 \(skippedByExt) 个，可播放 \(result.count) 个")
+
         result.sort { a, b in
             a.displayName.localizedStandardCompare(b.displayName) == .orderedAscending
+        }
+        for item in result.prefix(10) {
+            Log.event("scan", "  发现 \(item.name) [\(item.cloudStatus)]")
         }
         return result
     }
