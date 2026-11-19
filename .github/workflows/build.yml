@@ -46,6 +46,7 @@ jobs:
 
       - name: 构建（不签名）
         run: |
+          set -o pipefail
           xcodebuild build \
             -project MomoPlayer.xcodeproj \
             -scheme MomoPlayer \
@@ -57,7 +58,18 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             ONLY_ACTIVE_ARCH=NO \
-            ARCHS=arm64
+            ARCHS=arm64 \
+            2>&1 | tee xcodebuild.log
+          # 只挑错误行，方便在日志里定位
+          grep -E "error:|note: Building" xcodebuild.log | head -40 || true
+
+      - name: 上传编译日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log
+          if-no-files-found: ignore
 
       - name: 打包未签名 IPA
         run: |
