@@ -120,12 +120,15 @@ final class MomoPlayerController: UIViewController {
                 Log.event("player", "state → \(st)")
             }
 
+            // isPlaying 在 player 上，不在 layer 上
+            let playing = layer.player.isPlaying
+            let t = layer.player.currentPlaybackTime
+
             // 只在还没播起来时记录细节，播起来就安静了
-            if !layer.isPlaying || tick <= 6 {
-                let t = layer.player.currentPlaybackTime
+            if !playing || tick <= 6 {
                 Log.event(
                     "player",
-                    "playing=\(layer.isPlaying) buffering=\(layer.bufferingProgress)% time=\(String(format: "%.1f", t))"
+                    "playing=\(playing) buffering=\(layer.bufferingProgress)% time=\(String(format: "%.1f", t))"
                 )
             } else if tick == 7 {
                 Log.event("player", "已开始播放，停止细节轮询")
