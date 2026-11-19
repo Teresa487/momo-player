@@ -123,7 +123,7 @@ final class MomoPlayerController: UIViewController {
                 // 水平位移明显更大就走进度，否则按左右半屏分亮度/音量
                 if dx > dy, dx > 12 {
                     panMode = .seek
-                    seekStartTime = playerView.playerLayer?.player?.currentPlaybackTime ?? 0
+                    seekStartTime = playerView.playerLayer?.player.currentPlaybackTime ?? 0
                 } else if dy > dx, dy > 12 {
                     panMode = location.x < view.bounds.width / 2 ? .brightness : .volume
                 }
@@ -131,7 +131,7 @@ final class MomoPlayerController: UIViewController {
 
             switch panMode {
             case .seek:
-                let total = playerView.playerLayer?.player?.duration ?? 0
+                let total = playerView.playerLayer?.player.duration ?? 0
                 guard total > 0 else { break }
                 // 横跨整屏对应总时长的 1/2，滑起来不至于太灵敏
                 let delta = Double(translation.x / view.bounds.width) * total * 0.5
@@ -152,7 +152,7 @@ final class MomoPlayerController: UIViewController {
 
         case .ended, .cancelled:
             if panMode == .seek {
-                let total = playerView.playerLayer?.player?.duration ?? 0
+                let total = playerView.playerLayer?.player.duration ?? 0
                 if total > 0 {
                     let delta = Double(translation.x / view.bounds.width) * total * 0.5
                     let target = min(max(seekStartTime + delta, 0), total)
@@ -169,7 +169,8 @@ final class MomoPlayerController: UIViewController {
     }
 
     @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
-        guard let player = playerView.playerLayer?.player else { return }
+        guard let layer = playerView.playerLayer else { return }
+        let player = layer.player
         if player.isPlaying {
             playerView.pause()
         } else {

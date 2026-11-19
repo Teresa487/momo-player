@@ -2,7 +2,8 @@ name: MomoPlayer
 options:
   bundleIdPrefix: com.momo
   deploymentTarget:
-    iOS: "15.0"
+    # NavigationStack 需要 16；iOS 16 覆盖绝大多数在用设备
+    iOS: "16.0"
   createIntermediateGroups: true
 
 packages:
