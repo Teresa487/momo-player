@@ -7,6 +7,7 @@ struct LibraryView: View {
     @State private var activeFolder: FolderStore.Entry?
     @State private var items: [MediaItem] = []
     @State private var provider: LocalFileProvider?
+    @State private var monitor = DirectoryMonitor()
     @State private var loading = false
     @State private var errorText: String?
     @State private var showingPicker = false
@@ -196,6 +197,20 @@ struct LibraryView: View {
         } else {
             activeFolder = nil
             items = []
+            monitor.stop()
+            provider?.close()
+            provider = nil
+        }
+    }
+
+    /// 自动刷新用：不显示加载态，避免列表闪烁
+    private func rescanQuietly(_ entry: FolderStore.Entry) {
+        guard let p = provider else { return }
+        p.listPlayable { result in
+            if case .success(let list) = result {
+                items = list
+                Log.event("flow", "自动刷新完成 \(list.count) 项")
+            }
         }
     }
 
@@ -216,6 +231,15 @@ struct LibraryView: View {
         let p = LocalFileProvider(root: url, needsScope: !ok)
         provider = p
         Log.event("flow", "开始读取 \(url.path)")
+
+        // 目录里增删文件时自动刷新。已经在监听同一目录就不要重建，
+        // 否则每次刷新都拆一次监听，事件会丢。
+        if monitor.url?.path != url.path {
+            monitor.start(url: url) { [self] in
+                Log.event("flow", "监测到目录变化，自动刷新")
+                rescanQuietly(entry)
+            }
+        }
 
         p.listPlayable { result in
             loading = false

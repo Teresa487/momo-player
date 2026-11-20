@@ -50,6 +50,21 @@ final class LocalFileProvider {
     }
 
     private func enumerate(triggerCloudDownload: Bool) -> [MediaItem] {
+        // 上游 FileProvider 的 LocalFileProvider 同样用 NSFileCoordinator 包住读取，
+        // 避免和系统或其他 App 的读写撞车，iCloud 目录尤其需要。
+        var result: [MediaItem] = []
+        let coordinator = NSFileCoordinator()
+        var coordError: NSError?
+        coordinator.coordinate(readingItemAt: root, options: .withoutChanges, error: &coordError) { _ in
+            result = self.walk(triggerCloudDownload: triggerCloudDownload)
+        }
+        if let e = coordError {
+            Log.event("provider", "协调读取失败: \(e.localizedDescription)")
+        }
+        return result
+    }
+
+    private func walk(triggerCloudDownload: Bool) -> [MediaItem] {
         let fm = FileManager.default
         let keys: [URLResourceKey] = [
             .isRegularFileKey,
