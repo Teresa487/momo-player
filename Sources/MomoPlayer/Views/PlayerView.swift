@@ -61,10 +61,16 @@ final class MomoPlayerController: UIViewController {
         let exists = FileManager.default.fileExists(atPath: item.url.path)
         Log.event("player", "文件存在: \(exists)")
 
-        // 播放前必须自己持有权限，扫描阶段那次授权早已释放
+        // 播放前自己再拿一次权限。目录列表那边的 provider 可能已经随界面
+        // 切换释放了，这里必须独立持有，否则 KSPlayer 打不开文件。
         let ok = item.url.startAccessingSecurityScopedResource()
         Log.event("player", "startAccessing = \(ok)")
         holdingAccess = ok
+
+        // 拿不到权限但文件不存在，基本就是 bookmark 失效了，直接报错
+        if !exists {
+            Log.event("player", "文件不可读，放弃加载")
+        }
 
         let options = KSOptions()
         // 优先硬解，失败时 KSPlayer 会自动回退软解
