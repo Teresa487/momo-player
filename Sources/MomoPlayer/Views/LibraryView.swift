@@ -50,12 +50,22 @@ struct LibraryView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showingPicker, onDismiss: afterPickerDismissed) {
-                DirectoryPicker(
-                    onPick: { url in mount(url) },
-                    onFinish: { showingPicker = false }
-                )
-            }
+            .fileImporter(
+                isPresented: $showingPicker,
+                allowedContentTypes: [.folder],
+                allowsMultipleSelection: false,
+                onCompletion: { result in
+                    switch result {
+                    case .success(let urls):
+                        if let url = urls.first {
+                            mount(url)
+                        }
+                    case .failure(let error):
+                        Log.event("picker", "fileImporter 失败: \(error.localizedDescription)")
+                    }
+                },
+                onDismiss: afterPickerDismissed
+            )
             .sheet(isPresented: $showLog) { LogView() }
             .fullScreenCover(item: $playingIndex) { p in
                 PlayerView(playlist: items, startIndex: p.value).ignoresSafeArea()
@@ -186,9 +196,9 @@ struct LibraryView: View {
 
     /// 挂载一个新选中的目录。
     ///
-    /// 只做保存并记下待打开的目录，不碰 `showingPicker`、不在这里 `open`：
-    /// - sheet 的关闭由 `DirectoryPicker.onFinish` 统一处理
-    /// - 打开目录会改列表状态，必须等 sheet 收起后做，否则和转场打架
+    /// 只做保存并记下待打开的目录，不在这里 `open`：
+    /// 打开目录会改列表状态，必须等选择器收起后做，否则和转场打架。
+    /// 选择器的显隐由 `.fileImporter(isPresented:)` 自己管理，这里不碰。
     private func mount(_ url: URL) {
         Log.event("flow", "① 收到选择: \(url.path)")
 
