@@ -10,6 +10,10 @@ struct LibraryView: View {
     @State private var monitor = DirectoryMonitor()
     @State private var loading = false
     @State private var errorText: String?
+    /// 挂载成功后待打开的目录；sheet 收起前不能动列表，先记下来
+    @State private var pendingMountPath: String?
+    /// sheet 未收起时不能直接弹 alert，先存下来，等 onDismiss 再显示
+    @State private var pendingErrorText: String?
     @State private var showingPicker = false
     @State private var playingIndex: PlayIndex?
     @State private var showLog = false
@@ -46,28 +50,11 @@ struct LibraryView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showingPicker) {
-                DirectoryPicker { url in
-                    Log.event("flow", "① 收到选择: \(url.path)")
-
-                    guard FolderStore.add(url) else {
-                        Log.event("flow", "② 保存失败，终止")
-                        errorText = "无法记住这个目录的权限，换个位置试试"
-                        return
-                    }
-                    Log.event("flow", "② 保存成功")
-
-                    // 等 sheet 收起后再改状态，否则和 SwiftUI 的转场打架
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                        reloadFolders()
-                        if let entry = folders.first(where: { $0.path == url.path }) {
-                            Log.event("flow", "③ 准备打开")
-                            open(entry)
-                        } else {
-                            Log.event("flow", "③ 列表里找不到刚加的目录")
-                        }
-                    }
-                }
+            .sheet(isPresented: $showingPicker, onDismiss: afterPickerDismissed) {
+                DirectoryPicker(
+                    onPick: { url in mount(url) },
+                    onFinish: { showingPicker = false }
+                )
             }
             .sheet(isPresented: $showLog) { LogView() }
             .fullScreenCover(item: $playingIndex) { p in
@@ -197,6 +184,43 @@ struct LibraryView: View {
 
     // MARK: - 动作
 
+    /// 挂载一个新选中的目录。
+    ///
+    /// 只做保存并记下待打开的目录，不碰 `showingPicker`、不在这里 `open`：
+    /// - sheet 的关闭由 `DirectoryPicker.onFinish` 统一处理
+    /// - 打开目录会改列表状态，必须等 sheet 收起后做，否则和转场打架
+    private func mount(_ url: URL) {
+        Log.event("flow", "① 收到选择: \(url.path)")
+
+        guard FolderStore.add(url) else {
+            Log.event("flow", "② 保存失败，终止")
+            pendingErrorText = "无法记住这个目录的权限，换个位置试试"
+            return
+        }
+        Log.event("flow", "② 保存成功")
+        pendingMountPath = url.path
+    }
+
+    /// sheet 收起后统一处理：先打开新挂载的目录，没有待办再看要不要弹错误
+    private func afterPickerDismissed() {
+        if let path = pendingMountPath {
+            pendingMountPath = nil
+            folders = FolderStore.load()
+            if let entry = folders.first(where: { $0.path == path }) {
+                Log.event("flow", "③ 准备打开")
+                open(entry)
+            } else {
+                Log.event("flow", "③ 列表里找不到刚加的目录")
+                pendingErrorText = "目录已保存，但读取不到，请稍后重试"
+            }
+        }
+
+        // alert 要等 sheet 完全收起再弹，否则会挂在转场上被吞掉
+        guard let text = pendingErrorText else { return }
+        pendingErrorText = nil
+        errorText = text
+    }
+
     private func reloadFolders() {
         folders = FolderStore.load()
         Log.event("flow", "当前共有 \(folders.count) 个已保存目录")
@@ -232,14 +256,28 @@ struct LibraryView: View {
         provider?.close()
         provider = nil
 
-        guard let (url, ok) = FolderStore.resolve(entry) else {
+        guard let url = FolderStore.resolve(entry) else {
             loading = false
             errorText = "无法打开这个目录，请重新添加"
             return
         }
 
-        let p = LocalFileProvider(root: url, needsScope: !ok)
+        // 权限统一由 provider 在自身生命周期内申请与释放，
+        // resolve 不再自己 start，避免两边 start/stop 计数错配。
+        let p = LocalFileProvider(root: url, needsScope: true)
         provider = p
+
+        // startAccessing 返回 false 不代表失败（沙盒内目录本来就不用授权），
+        // 真正读一下才能确定。读不到就是授权失效，让用户重新挂载。
+        guard p.isReadable() else {
+            loading = false
+            p.close()
+            provider = nil
+            Log.event("flow", "目录不可访问，bookmark 可能已失效: \(url.path)")
+            errorText = "这个目录的访问权限已失效，请重新添加"
+            return
+        }
+
         Log.event("flow", "开始读取 \(url.path)")
 
         // 目录里增删文件时自动刷新。已经在监听同一目录就不要重建，

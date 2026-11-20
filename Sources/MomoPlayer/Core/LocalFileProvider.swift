@@ -10,18 +10,31 @@ import Foundation
 /// - 目录列举一开始就完成，全部拿到才回调，不做分批
 final class LocalFileProvider {
     let root: URL
-    /// 是否是外部目录（需要 security-scoped 授权）
-    private let needsScope: Bool
     private var scoped = false
     private let queue = DispatchQueue(label: "momo.scan", qos: .userInitiated)
 
     init(root: URL, needsScope: Bool = true) {
         self.root = root
-        self.needsScope = needsScope
         if needsScope {
             scoped = root.startAccessingSecurityScopedResource()
         }
-        Log.event("provider", "创建 provider root=\(root.path) scoped=\(scoped)")
+        Log.event("provider", "创建 provider root=\(root.path) needsScope=\(needsScope) scoped=\(scoped)")
+    }
+
+    /// 真正读一下目录，确认权限可用。
+    ///
+    /// `startAccessingSecurityScopedResource` 返回 false 有两种情况：
+    /// 沙盒内目录（本来就不用授权，能读）、外部目录授权失败（读不到）。
+    /// 只有实际尝试列举才能区分。对应 SenPlayer 在 bookmark 还原失败时
+    /// 把 `bookmarkDate` 置空、让用户重新挂载的处理。
+    func isReadable() -> Bool {
+        do {
+            _ = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            return true
+        } catch {
+            Log.event("provider", "目录不可读 \(root.path): \(error.localizedDescription)")
+            return false
+        }
     }
 
     /// 释放权限，provider 不再可用

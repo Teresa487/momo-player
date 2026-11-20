@@ -8,8 +8,14 @@ import UniformTypeIdentifiers
 ///
 /// 只能选文件夹：混入文件类型会让系统按「选文件」处理，
 /// 选中文件夹时确定按钮不可用。
+///
+/// `UIDocumentPickerViewController` 选完会自己 dismiss（是它内部的 dismiss，
+/// SwiftUI 收不到通知），所以这里必须显式回调 `onFinish`，
+/// 由调用方把 `isPresented` 置回 false，否则会留一层空白 sheet 盖住界面。
 struct DirectoryPicker: UIViewControllerRepresentable {
     let onPick: (URL) -> Void
+    /// 选中或取消都会调用，用于关闭 sheet
+    let onFinish: () -> Void
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
         // 只能是 .folder。混入 .movie 之类的文件类型后，系统会按「选择文件」
@@ -27,14 +33,16 @@ struct DirectoryPicker: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onPick: onPick)
+        Coordinator(onPick: onPick, onFinish: onFinish)
     }
 
     final class Coordinator: NSObject, UIDocumentPickerDelegate {
         private let onPick: (URL) -> Void
+        private let onFinish: () -> Void
 
-        init(onPick: @escaping (URL) -> Void) {
+        init(onPick: @escaping (URL) -> Void, onFinish: @escaping () -> Void) {
             self.onPick = onPick
+            self.onFinish = onFinish
         }
 
         func documentPicker(
@@ -42,6 +50,8 @@ struct DirectoryPicker: UIViewControllerRepresentable {
             didPickDocumentsAt urls: [URL]
         ) {
             Log.event("picker", "选中 \(urls.count) 项")
+            defer { onFinish() }
+
             guard let url = urls.first else {
                 Log.event("picker", "返回为空")
                 return
@@ -57,6 +67,7 @@ struct DirectoryPicker: UIViewControllerRepresentable {
 
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
             Log.event("picker", "用户取消")
+            onFinish()
         }
     }
 }
