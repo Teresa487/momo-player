@@ -10,7 +10,7 @@ struct LibraryView: View {
     @State private var loading = false
     @State private var errorText: String?
     @State private var showingPicker = false
-    @State private var playing: MediaItem?
+    @State private var playingIndex: PlayIndex?
     @State private var showLog = false
 
     var body: some View {
@@ -59,8 +59,8 @@ struct LibraryView: View {
                 }
             }
             .sheet(isPresented: $showLog) { LogView() }
-            .fullScreenCover(item: $playing) { item in
-                PlayerView(item: item).ignoresSafeArea()
+            .fullScreenCover(item: $playingIndex) { p in
+                PlayerView(playlist: items, startIndex: p.value).ignoresSafeArea()
             }
             .alert("出错了", isPresented: Binding(
                 get: { errorText != nil },
@@ -154,28 +154,34 @@ struct LibraryView: View {
     }
 
     private var list: some View {
-        List(items) { item in
-            Button {
-                Log.event("flow", "播放 \(item.url.path)")
-                playing = item
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: MediaKind.audioExtensions.contains(item.url.pathExtension.lowercased())
-                          ? "music.note" : "film")
-                        .font(.title3)
-                        .foregroundStyle(.tint)
-                        .frame(width: 28)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.displayName).lineLimit(1).foregroundStyle(.primary)
-                        if item.cloudStatus == .downloading {
-                            Text("云端文件，正在下载").font(.caption2).foregroundStyle(.orange)
-                        }
-                    }
-                    Spacer()
+        List {
+            ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
+                Button {
+                    Log.event("flow", "播放 [\(idx + 1)/\(items.count)] \(item.url.path)")
+                    playingIndex = PlayIndex(value: idx)
+                } label: {
+                    row(item: item)
                 }
             }
         }
         .listStyle(.plain)
+    }
+
+    private func row(item: MediaItem) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: MediaKind.audioExtensions.contains(item.url.pathExtension.lowercased())
+                  ? "music.note" : "film")
+                .font(.title3)
+                .foregroundStyle(.tint)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.displayName).lineLimit(1).foregroundStyle(.primary)
+                if item.cloudStatus == .downloading {
+                    Text("云端文件，正在下载").font(.caption2).foregroundStyle(.orange)
+                }
+            }
+            Spacer()
+        }
     }
 
     // MARK: - 动作
@@ -223,6 +229,12 @@ struct LibraryView: View {
             }
         }
     }
+}
+
+/// fullScreenCover(item:) 要求 Identifiable，Int 本身不满足
+private struct PlayIndex: Identifiable {
+    let value: Int
+    var id: Int { value }
 }
 
 /// 日志页
