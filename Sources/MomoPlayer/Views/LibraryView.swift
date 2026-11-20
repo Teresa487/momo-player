@@ -12,7 +12,7 @@ struct LibraryView: View {
     @State private var errorText: String?
     /// 挂载成功后待打开的目录；sheet 收起前不能动列表，先记下来
     @State private var pendingMountPath: String?
-    /// sheet 未收起时不能直接弹 alert，先存下来，等 onDismiss 再显示
+    /// 选择器收起前不能直接弹 alert，先存下来，等收起后再显示
     @State private var pendingErrorText: String?
     @State private var showingPicker = false
     @State private var playingIndex: PlayIndex?
@@ -63,8 +63,10 @@ struct LibraryView: View {
                     case .failure(let error):
                         Log.event("picker", "fileImporter 失败: \(error.localizedDescription)")
                     }
-                },
-                onDismiss: afterPickerDismissed
+                    // onDismiss 参数的重载是 iOS 17+，16 上编不过，
+                    // 收尾统一放在这里：completion 之后选择器才会收起。
+                    afterPickerDismissed()
+                }
             )
             .sheet(isPresented: $showLog) { LogView() }
             .fullScreenCover(item: $playingIndex) { p in
