@@ -48,14 +48,24 @@ struct LibraryView: View {
             }
             .sheet(isPresented: $showingPicker) {
                 DirectoryPicker { url in
-                    Log.event("flow", "选中目录 \(url.path)")
-                    if FolderStore.add(url) {
-                        reloadFolders()
-                        if let entry = FolderStore.load().first(where: { $0.path == url.path }) {
-                            open(entry)
-                        }
-                    } else {
+                    Log.event("flow", "① 收到选择: \(url.path)")
+
+                    guard FolderStore.add(url) else {
+                        Log.event("flow", "② 保存失败，终止")
                         errorText = "无法记住这个目录的权限，换个位置试试"
+                        return
+                    }
+                    Log.event("flow", "② 保存成功")
+
+                    // 等 sheet 收起后再改状态，否则和 SwiftUI 的转场打架
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        reloadFolders()
+                        if let entry = folders.first(where: { $0.path == url.path }) {
+                            Log.event("flow", "③ 准备打开")
+                            open(entry)
+                        } else {
+                            Log.event("flow", "③ 列表里找不到刚加的目录")
+                        }
                     }
                 }
             }
@@ -189,7 +199,7 @@ struct LibraryView: View {
 
     private func reloadFolders() {
         folders = FolderStore.load()
-        Log.event("flow", "已保存 \(folders.count) 个目录")
+        Log.event("flow", "当前共有 \(folders.count) 个已保存目录")
         if let cur = activeFolder, folders.contains(where: { $0.path == cur.path }) {
             open(cur)
         } else if let first = folders.first {

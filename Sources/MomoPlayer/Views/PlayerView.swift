@@ -12,7 +12,7 @@ import UIKit
 /// - 水平滑动：进度
 /// - 双击：播放/暂停
 /// - 长按：2 倍速，松手恢复
-/// - 上下滑动（竖直大幅）：切换上/下一集
+/// - 竖直大幅滑动：切换上/下一集
 /// - 双指捏合：缩放画面
 struct PlayerView: UIViewControllerRepresentable {
     /// 整个播放列表，用来做连播和切换
